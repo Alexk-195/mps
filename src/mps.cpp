@@ -31,7 +31,7 @@
 
 #ifdef MPS_THREADS_QT
 
-#pragma message("MPS Threads: Qt")
+//#pragma message("MPS Threads: Qt")
 
 #include <windows.h>
 
@@ -70,7 +70,7 @@ int64_t platform_get_thread_id()
 #endif
 
 #ifdef _MSC_VER
-#pragma message("MPS Threads: MSVC")
+//#pragma message("MPS Threads: MSVC")
 
 #include <windows.h>
 
@@ -141,7 +141,7 @@ int64_t platform_get_thread_id()
 
 #ifdef MPS_THREADS_POSIX
 
-#pragma message("MPS Threads: Posix pthreads")
+//#pragma message("MPS Threads: Posix pthreads")
 
 #include <unistd.h>
 
