@@ -40,6 +40,7 @@
 #include <queue>
 #include <atomic>
 #include <set>
+#include <string>
 
 #define mps_thread_safe const
 #define mps_thread_critical mutable
@@ -60,7 +61,7 @@ namespace mps {
 #endif
 
     constexpr int VERSION_MAJOR = 1;
-    constexpr int VERSION_MINOR = 10;
+    constexpr int VERSION_MINOR = 11;
 
     /// type for mutex lock
     using mps_lock = std::unique_lock <std::mutex>;

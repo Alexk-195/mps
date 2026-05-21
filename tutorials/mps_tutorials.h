@@ -2,6 +2,7 @@
 #define RB_MPS_EXTRA_H
 
 #include <ostream>
+#include <cstdint>
 
 namespace mps_extra {
 

@@ -10,6 +10,7 @@
 #include <iostream>
 #include <sstream>
 #include <array>
+#include <cstdint>
 
 namespace mps_extra {
     using namespace mps;
