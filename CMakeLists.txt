@@ -10,4 +10,8 @@ target_link_libraries(mps pthread)
 add_executable(mps_tutorial tutorials/mps_tutorials.cpp)
 target_link_libraries(mps_tutorial mps)
 
-
+option(MPS_BUILD_TESTS "Build unit tests" ON)
+if(MPS_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

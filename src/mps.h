@@ -413,6 +413,7 @@ namespace mps {
 
     /// Timer class. Returns number of milliseconds in elapsed() method
     class timer {
+        bool started_ = false;
 
     public:
         using clock_type = std::chrono::system_clock;
@@ -424,7 +425,7 @@ namespace mps {
         /// resets the timer
         void reset();
 
-        /// elapsed time in milliseconds since reset/creation
+        /// elapsed time in milliseconds since reset/creation; returns 0 if reset() was never called
         double elapsed() const;
     };
 

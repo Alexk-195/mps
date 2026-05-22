@@ -690,6 +690,8 @@ timer::timer(bool resetIn) {
 }
 
 double timer::elapsed() const {
+    if (!started_)
+        return 0.0;
     clock_type::time_point stop_time = clock_type::now();
     auto ms = 0.001*((double) (std::chrono::duration_cast<std::chrono::microseconds>(stop_time - start_time).count()));
     return ms;
@@ -697,6 +699,7 @@ double timer::elapsed() const {
 
 void timer::reset() {
     start_time = clock_type::now();
+    started_ = true;
 }
 
 
