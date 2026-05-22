@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+
+# Build directories
+build/
+mps_tutorial
+
+# IDE folders
+.vscode/
+.idea/
+compile_commands.json

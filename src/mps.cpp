@@ -11,7 +11,7 @@
 
 // try to detect platform
 #ifndef MPS_THREADS_POSIX
-#if defined(_linux) || defined(__unix__)
+#if defined(__linux__) || defined(__unix__)
 #define MPS_THREADS_POSIX
 #endif
 #endif
