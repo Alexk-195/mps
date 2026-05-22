@@ -137,7 +137,7 @@ namespace mps {
         base(const base & b) = delete;
         base& operator=(const base & b) = delete;
 
-        virtual ~base();
+        virtual ~base() noexcept(false);
 
         /// sets name of the instance
         void node_name(const std::string & str);
@@ -181,7 +181,7 @@ namespace mps {
          */
         virtual size_t push_back_to_limit(std::shared_ptr<const mps::message> m, size_t limit, bool &pushed) mps_thread_safe = 0;
 
-        virtual ~i_messages_acceptor() = default;
+        virtual ~i_messages_acceptor() noexcept(false) = default;
     };
 
     /**
@@ -241,7 +241,7 @@ namespace mps {
         */
         virtual size_t remove_worker(std::shared_ptr<worker> w) mps_thread_safe = 0;
 
-        virtual ~i_worker_pool() = default;
+        virtual ~i_worker_pool() noexcept(false) = default;
     };
 
 
@@ -371,7 +371,7 @@ namespace mps {
         /// blocks until threads are finished and joined
         virtual void join() mps_thread_safe = 0;
 
-        virtual ~i_startable() = default;
+        virtual ~i_startable() noexcept(false) = default;
     };
 
     /// shortcut for pool pointer
@@ -444,8 +444,8 @@ namespace mps {
         /// check if waiting is allowed: check priorities of pool which owns the worker and calling pool/thread
         void check() {
             auto sowner_pool = this->get_owner_pool().lock();
-            int owner_prio = sowner_pool->get_options().priority;
-            int caller_prio = mps::get_this_thread_prio();
+            unsigned int owner_prio = sowner_pool->get_options().priority;
+            unsigned int caller_prio = mps::get_this_thread_prio();
 
             if (caller_prio <= owner_prio) {
                 // wrong locking prio: throw exception
