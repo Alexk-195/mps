@@ -184,9 +184,9 @@ void platform_thread_set_schedule_priority(mps::pool_options::thread_type t) {
 
     if (ret2 != 0) {
         if (ret2 == EPERM)
-            std::cout << "ERROR in mps.cpp: Failed to set thread priority " << (int)t << " because of insufficient permissions" << std::endl;
+            std::cerr << "ERROR in mps.cpp: Failed to set thread priority " << (int)t << " because of insufficient permissions" << std::endl;
         else
-            std::cout << "ERROR in mps.cpp: Failed to set thread priority " << (int)t << ", Error="   << ret2 << std::endl;
+            std::cerr << "ERROR in mps.cpp: Failed to set thread priority " << (int)t << ", Error="   << ret2 << std::endl;
         throw mps::insufficient_privileges();
     }
     else {
@@ -312,7 +312,8 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
             mps_scope_lock lock(debug_mutex);
 
             if (debug_insts.find(this) == debug_insts.end()) {
-                exit(-2);
+                std::cerr << "mps: double-free detected for base instance \"" << nodename << "\"\n";
+                std::abort();
             }
             debug_insts.erase(this);
         }

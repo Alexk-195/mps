@@ -444,8 +444,8 @@ namespace mps {
         /// check if waiting is allowed: check priorities of pool which owns the worker and calling pool/thread
         void check() {
             auto sowner_pool = this->get_owner_pool().lock();
-            int owner_prio = sowner_pool->get_options().priority;
-            int caller_prio = mps::get_this_thread_prio();
+            unsigned int owner_prio = sowner_pool->get_options().priority;
+            unsigned int caller_prio = mps::get_this_thread_prio();
 
             if (caller_prio <= owner_prio) {
                 // wrong locking prio: throw exception
