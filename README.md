@@ -2,13 +2,24 @@
 
 [![Tests](https://github.com/Alexk-195/mps/actions/workflows/tests.yml/badge.svg)](https://github.com/Alexk-195/mps/actions/workflows/tests.yml)
 
-MPS is a framework designed to facilitate multithreading in embedded applications by providing an easy and safe way to handle threads and message passing. The framework is built around three primary components:
+MPS is a C++17 framework for multithreading in embedded and concurrent applications. It abstracts thread management, mutexes, and condition variables behind a message-passing model built on three core primitives:
 
-- **Pool**: Manages a collection of resources or threads.
-- **Worker**: Represents an individual thread or processing unit.
-- **Message**: The data exchanged between workers.
+- **Pool** (`mps::pool`) — owns an OS thread and a thread-safe message queue.
+- **Worker** (`mps::worker`) — abstract message handler; override `process()` and attach to a pool.
+- **Message** (`mps::message`) — base for all message types; passed as `shared_ptr<const message>`.
 
-For detailed information, refer to the `mps.h` and `mps_tutorials.h` files in the repository.
+Additional components:
+
+| Component | Purpose |
+|-----------|---------|
+| `mps::waiter<T>` | Blocks the caller until a message of type `T` arrives. |
+| `mps::timer` | Stopwatch; `elapsed()` returns ms since last `reset()`. |
+| `mps::distributor` | Wraps N pools and distributes workers/messages round-robin. |
+| `mps::pool_thread` | Convenience helper that runs a lambda once in a pool thread. |
+| `mps::synchronized<T>` | Thread-safe deep-copy wrapper for sharing data across threads. |
+| `mps::ts_queue<T>` | Thread-safe FIFO queue with blocking pop and optional push limit. |
+
+For detailed information, refer to `src/mps.h` and `tutorials/mps_tutorials.cpp` (14 runnable examples).
 
 ## Building MPS
 
@@ -16,47 +27,33 @@ You can build the MPS project using either CMake or the provided `build.sh` scri
 
 ### Using CMake
 
-1. **Install CMake**: Ensure that CMake is installed on your system. You can download it from the [official website](https://cmake.org/download/) or install it using your system's package manager.
+```bash
+git clone https://github.com/Alexk-195/mps.git
+cd mps
+cmake -B build
+cmake --build build --parallel
+```
 
-2. **Clone the Repository**:
-   ```bash
-   git clone https://github.com/Alexk-195/mps.git
-   cd mps
-   ```
+Build outputs in `build/`:
+- `libmps.a` — static library
+- `mps_tutorial` — tutorial runner (14 examples)
+- `mps_tests` — unit test suite
+- `mps_tests_tracking` — object-tracking tests (compiled with `-DMPS_TRACK_OBJECTS`)
 
-3. **Create a Build Directory**:
-   ```bash
-   mkdir build
-   cd build
-   ```
+### Running Tests
 
-4. **Generate Build Files**:
-   ```bash
-   cmake ..
-   ```
-
-5. **Compile the Project**:
-   ```bash
-   make
-   ```
-
-   The compiled binaries will be located in the `build` directory.
+```bash
+ctest --test-dir build --output-on-failure
+```
 
 ### Using the `build.sh` Script
 
-A convenient `build.sh` script is provided to automate the build process. This script performs the steps outlined above.
+`build.sh` is a legacy single-call g++ script useful for quick debug builds. It hardcodes `-DMPS_TRACK_OBJECTS -O0` and outputs `mps_tutorial` in the repo root. Prefer CMake for all other use cases.
 
-1. **Make the Script Executable** (if necessary):
-   ```bash
-   chmod +x build.sh
-   ```
-
-2. **Run the Script**:
-   ```bash
-   ./build.sh
-   ```
-
-   The script will build tutorial without CMake using just g++.
+```bash
+chmod +x build.sh
+./build.sh
+```
 
 ## License
 
