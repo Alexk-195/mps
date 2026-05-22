@@ -240,7 +240,7 @@ Use this to detect leaks during development. The feature is disabled in normal b
 |-------|----------|---------|
 | Linux platform detection uses `_linux` (single underscore) instead of `__linux__` | `src/mps.cpp:14` | High — falls through to POSIX only via `__unix__` |
 | `base::~base()` calls `exit(-2)` on double-free when tracking | `src/mps.cpp:315` | Medium — hostile to embedders |
-| `add_worker` sets `owned = true` before `owner_pool`; tiny race window | `src/mps.cpp:466` | Low |
+| ~~`add_worker` sets `owned = true` before `owner_pool`; tiny race window~~ — closed by checking atomic `owned` in `remove_worker` instead of locking `owner_pool` | `src/mps.cpp:466,477` | Resolved |
 | `insufficient_privileges` writes to `std::cout` instead of `std::cerr` | `src/mps.cpp:187-189` | Low |
 | Shared `nmessage` reused for all notifications (safe but undocumented) | `src/mps.cpp:421,599` | Info |
 | Signed/unsigned mix in `waiter::check` | `src/mps.h:446-448` | Info |
