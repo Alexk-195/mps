@@ -306,13 +306,14 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
     }
 
 
-    base::~base() noexcept(false) {
+    base::~base() {
 #ifdef MPS_TRACK_OBJECTS
         if (mps_objects_tracking) {
             mps_scope_lock lock(debug_mutex);
 
             if (debug_insts.find(this) == debug_insts.end()) {
-                throw mps::exception("double-free detected: base instance not in tracking set");
+                std::cerr << "mps: double-free detected for base instance \"" << nodename << "\"\n";
+                std::abort();
             }
             debug_insts.erase(this);
         }

@@ -137,7 +137,7 @@ namespace mps {
         base(const base & b) = delete;
         base& operator=(const base & b) = delete;
 
-        virtual ~base() noexcept(false);
+        virtual ~base();
 
         /// sets name of the instance
         void node_name(const std::string & str);
@@ -181,7 +181,7 @@ namespace mps {
          */
         virtual size_t push_back_to_limit(std::shared_ptr<const mps::message> m, size_t limit, bool &pushed) mps_thread_safe = 0;
 
-        virtual ~i_messages_acceptor() noexcept(false) = default;
+        virtual ~i_messages_acceptor() = default;
     };
 
     /**
@@ -241,7 +241,7 @@ namespace mps {
         */
         virtual size_t remove_worker(std::shared_ptr<worker> w) mps_thread_safe = 0;
 
-        virtual ~i_worker_pool() noexcept(false) = default;
+        virtual ~i_worker_pool() = default;
     };
 
 
@@ -371,7 +371,7 @@ namespace mps {
         /// blocks until threads are finished and joined
         virtual void join() mps_thread_safe = 0;
 
-        virtual ~i_startable() noexcept(false) = default;
+        virtual ~i_startable() = default;
     };
 
     /// shortcut for pool pointer
