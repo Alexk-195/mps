@@ -32,13 +32,16 @@ TEST(PoolWorkers, AddSameWorkerTwiceThrows) {
     EXPECT_THROW(p2->add_worker(w), mps::exception);
 }
 
-TEST(PoolWorkers, RemoveFromWrongPoolReturnsZero) {
+TEST(PoolWorkers, RemoveFromWrongPoolNoOps) {
     auto p1 = make_started_pool();
     auto p2 = make_started_pool();
     auto w = std::make_shared<CountingWorker>();
     p1->add_worker(w);
-    // p2 does not own w; remove_worker returns 0
-    EXPECT_EQ(p2->remove_worker(w), 0u);
+    // p2 does not own w: enqueues internally and no-ops, does not throw
+    EXPECT_NO_THROW(p2->remove_worker(w));
+    // Worker must still be active in p1
+    p1->push_back(std::make_shared<SimpleMsg>());
+    EXPECT_TRUE(w->await(1, 1000));
 }
 
 TEST(PoolWorkers, WorkerExceptionTriggersRemoval) {
