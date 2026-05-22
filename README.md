@@ -1,5 +1,7 @@
 # Message Processing System (MPS)
 
+[![Tests](https://github.com/Alexk-195/mps/actions/workflows/tests.yml/badge.svg)](https://github.com/Alexk-195/mps/actions/workflows/tests.yml)
+
 MPS is a framework designed to facilitate multithreading in embedded applications by providing an easy and safe way to handle threads and message passing. The framework is built around three primary components:
 
 - **Pool**: Manages a collection of resources or threads.
