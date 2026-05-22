@@ -14,6 +14,13 @@ set(MPS_TEST_SOURCES
     test_timer.cpp
     test_ts_queue.cpp
     test_synchronized.cpp
+    test_pool_lifecycle.cpp
+    test_pool_workers.cpp
+    test_pool_messages.cpp
+    test_waiter.cpp
+    test_distributor.cpp
+    test_pool_thread.cpp
+    test_priority.cpp
 )
 
 add_executable(mps_tests ${MPS_TEST_SOURCES})

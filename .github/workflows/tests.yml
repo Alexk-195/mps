@@ -8,6 +8,31 @@ on:
 
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Debug, Release]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y cmake g++
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DMPS_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  tsan:
     runs-on: ubuntu-latest
 
     steps:
@@ -16,8 +41,13 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get install -y cmake g++
 
-      - name: Configure
-        run: cmake -B build -DMPS_BUILD_TESTS=ON
+      - name: Configure with ThreadSanitizer
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DMPS_BUILD_TESTS=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build
         run: cmake --build build --parallel
