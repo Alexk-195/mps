@@ -27,7 +27,6 @@ mps/
 │   └── mps_tutorials.cpp      # 14 runnable end-to-end examples
 ├── CMakeLists.txt             # Top-level build: static lib + tutorial + tests
 ├── build.sh                   # Legacy single-file build (debug only)
-├── TODO.md                    # Known bugs and improvement proposals
 └── .github/workflows/tests.yml  # CI: configure → build → ctest on ubuntu-latest
 ```
 
@@ -218,7 +217,7 @@ Triggers on push and PR to `main`. Single job on `ubuntu-latest`:
 3. `cmake --build build --parallel`
 4. `ctest --test-dir build --output-on-failure`
 
-No Windows/macOS matrix, no sanitizers, no coverage — these are listed in `TODO.md` as future improvements.
+No Windows/macOS matrix, no sanitizers, no coverage.
 
 ---
 
@@ -234,16 +233,16 @@ Use this to detect leaks during development. The feature is disabled in normal b
 
 ---
 
-## Known Issues (see `TODO.md` for full details)
+## Known Issues
 
 | Issue | Location | Severity |
 |-------|----------|---------|
-| Linux platform detection uses `_linux` (single underscore) instead of `__linux__` | `src/mps.cpp:14` | High — falls through to POSIX only via `__unix__` |
-| `base::~base()` calls `exit(-2)` on double-free when tracking | `src/mps.cpp:315` | Medium — hostile to embedders |
-| ~~`add_worker` sets `owned = true` before `owner_pool`; tiny race window~~ — closed by checking atomic `owned` in `remove_worker` instead of locking `owner_pool` | `src/mps.cpp:466,477` | Resolved |
-| `insufficient_privileges` writes to `std::cout` instead of `std::cerr` | `src/mps.cpp:187-189` | Low |
-| Shared `nmessage` reused for all notifications (safe but undocumented) | `src/mps.cpp:421,599` | Info |
-| Signed/unsigned mix in `waiter::check` | `src/mps.h:446-448` | Info |
+| ~~Linux platform detection used `_linux` instead of `__linux__`~~ — fixed | `src/mps.cpp:14` | Resolved |
+| ~~`base::~base()` called `exit(-2)` on double-free when tracking~~ — replaced with `abort()` + `cerr` | `src/mps.cpp:315` | Resolved |
+| ~~`add_worker` sets `owned = true` before `owner_pool`; tiny race window~~ — closed by checking atomic `owned` in `remove_worker` | `src/mps.cpp:466,477` | Resolved |
+| ~~`insufficient_privileges` wrote to `std::cout` instead of `std::cerr`~~ — fixed | `src/mps.cpp:187-189` | Resolved |
+| ~~Signed/unsigned mix in `waiter::check`~~ — both variables now `unsigned int` | `src/mps.h:446-448` | Resolved |
+| Shared `nmessage` reused for all notifications (safe because `message` is `const`, but undocumented) | `src/mps.cpp:376,454,600` | Info |
 
 ---
 
