@@ -33,10 +33,12 @@ Review of the MPS (Message Processing System) C++ multithreading framework
   The branch is currently selected only via `__unix__`, which is not defined
   on every glibc toolchain. Risk: silent fall-through to the
   "Unknown platform" stub on some configurations.
-- **`add_worker` has a small race window.** `src/mps.cpp:466`
-  sets `owned = true` before `owner_pool = own_ref`. A concurrent
-  `remove_worker` calling `w->get_owner_pool().lock()` may briefly see a null
-  owner. Tighten with a short lock or reorder assignments + memory fence.
+- ~~**`add_worker` has a small race window.**~~ Fixed: `remove_worker` now
+  checks the atomic `owned` flag instead of locking `owner_pool`. Since
+  `add_worker` sets `owned` before enqueueing the m_add_worker message and
+  `remove_worker_internal` clears it only after erasing the worker from the
+  list, the (owned, owner_pool) ordering can no longer cause a spurious
+  "worker has no owner" throw or a torn `weak_ptr` read.
 - **`base::~base` calls `exit(-2)`** when tracking detects double-free
   (`src/mps.cpp:315`). Hard-exit from a destructor makes the framework
   unfriendly to embedders; throw or log and continue instead.
