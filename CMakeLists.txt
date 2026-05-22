@@ -3,13 +3,11 @@ project(mps)
 
 set(CMAKE_CXX_STANDARD 17)
 
-include_directories(src)
+add_library(mps STATIC src/mps.cpp)
+target_include_directories(mps PUBLIC src)
+target_link_libraries(mps pthread)
 
-add_executable(mps_tutorial
-        src/mps.cpp
-        tutorials/mps_tutorials.cpp
-        )
-
-target_link_libraries(mps_tutorial pthread)
+add_executable(mps_tutorial tutorials/mps_tutorials.cpp)
+target_link_libraries(mps_tutorial mps)
 
 
