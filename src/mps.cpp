@@ -478,12 +478,12 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
             if (w == nullptr)
                 throw exception("worker must not be null");
 
-            auto wp = w->get_owner_pool().lock();
-            if (wp == nullptr)
+            // Use the atomic owned flag instead of owner_pool: the weak_ptr can be torn
+            // or stale relative to owned (set in add_worker before owner_pool). If the
+            // worker belongs to a different pool, remove_worker_internal will not find
+            // it and silently no-op.
+            if (!w->owned.load())
                 throw exception("worker has no owner");
-
-            if (wp.get()  !=  this)
-                return 0;
 
             auto m = std::make_shared<pool_internal_message>();
             m->type = pool_internal_message::message_type::m_remove_worker;
