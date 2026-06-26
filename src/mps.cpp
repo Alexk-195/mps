@@ -354,11 +354,15 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         using worker_container = std::vector <std::shared_ptr<worker> > ;
         using queue_container =  ts_queue<std::shared_ptr<const mps::message> > ;
         using thread_ptr =  std::shared_ptr <std::thread>;
-        int64_t native_handle_id = 0;
+        // Relaxed atomics: these are best-effort statistics read from other
+        // threads. Atomicity removes the data race (and keeps ThreadSanitizer
+        // quiet) without imposing ordering on the dispatch loop. The values are
+        // still inherently stale by the time a reader uses them.
+        std::atomic<int64_t> native_handle_id{0};
 
         queue_container queue; ///< queue with messages
         pool_options options; ///< copy of options provided in constructor
-        size_t last_queue_size; ///< copy of last queue size which is returned by queue_size
+        std::atomic<size_t> last_queue_size{0}; ///< copy of last queue size which is returned by queue_size
 
         /// container with workers
         mps_thread_critical worker_container workers;
@@ -430,7 +434,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
             nmessage = std::make_shared<notification_message>();
             started.store(0);
             node_name("pool");
-            last_queue_size = 0;
+            last_queue_size.store(0, std::memory_order_relaxed);
         }
 
         /// his is needed to create short name for thread, as pthreds only support up to this length
@@ -444,7 +448,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 
         /// return queue size. This is not synchronized so it should be used only for statistics
         size_t queue_size() const {
-            return last_queue_size;
+            return last_queue_size.load(std::memory_order_relaxed);
         }
 
         ~pool_impl() override {
@@ -551,7 +555,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 
         int64_t native_thread_id() mps_thread_safe override
         {
-            return native_handle_id;
+            return native_handle_id.load(std::memory_order_relaxed);
         }
 
         void dump(std::ostream & ostr) override
@@ -598,7 +602,7 @@ void pool_impl::thread_proc() {
     std::shared_ptr<const mps::message> m;
     queue_container::pop_result qpr;
     run = true;
-    native_handle_id = platform_get_thread_id();
+    native_handle_id.store(platform_get_thread_id(), std::memory_order_relaxed);
 
     std::string short_name = node_name();
     if (short_name.size() > sizeof(pool_short_name)-1)
@@ -622,7 +626,7 @@ void pool_impl::thread_proc() {
     /// thread loop will go until pool is stopped
     while (run) {
         qpr = queue.pop(m, options.timeout_wait_for_message);
-        last_queue_size = qpr.first;
+        last_queue_size.store(qpr.first, std::memory_order_relaxed);
         if (qpr.second) {
             auto mym = std::dynamic_pointer_cast<const pool_internal_message>(m);
             if (mym) {
