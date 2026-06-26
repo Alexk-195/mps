@@ -291,11 +291,15 @@ namespace mps {
             mps_lock mlock(mutex);
             pop_result r(0, false);
 
-            if (timeout_ms != 0 && queue.empty()) {
+            if (timeout_ms != 0) {
+                    // Predicate-style waiting guards against spurious wakeups so a
+                    // blocking pop does not return "empty" before either an item
+                    // arrives or the timeout truly elapses.
                     if (timeout_ms > 0)
-                        cond.wait_for(mlock, std::chrono::milliseconds(timeout_ms));
+                        cond.wait_for(mlock, std::chrono::milliseconds(timeout_ms),
+                                      [this]{ return !queue.empty(); });
                     else
-                        cond.wait(mlock); // timeout_ms < 0, ignore sonarLint finding about condition argument
+                        cond.wait(mlock, [this]{ return !queue.empty(); }); // timeout_ms < 0
             }
 
             if (queue.empty()) {
@@ -416,7 +420,9 @@ namespace mps {
         bool started_ = false;
 
     public:
-        using clock_type = std::chrono::system_clock;
+        // steady_clock is monotonic: elapsed timing must not be affected by
+        // wall-clock adjustments (NTP steps, manual clock changes).
+        using clock_type = std::chrono::steady_clock;
         clock_type::time_point start_time; // starting/reset time
 
         /// timer will be started on creation per default. Provide false if reset is not desired.
@@ -444,6 +450,11 @@ namespace mps {
         /// check if waiting is allowed: check priorities of pool which owns the worker and calling pool/thread
         void check() {
             auto sowner_pool = this->get_owner_pool().lock();
+            if (sowner_pool == nullptr) {
+                // Waiter was never added to a pool, or the owning pool has been
+                // destroyed. Report it instead of dereferencing a null pointer.
+                throw mps::exception("waiter has no owning pool to wait on");
+            }
             unsigned int owner_prio = sowner_pool->get_options().priority;
             unsigned int caller_prio = mps::get_this_thread_prio();
 
@@ -499,12 +510,14 @@ namespace mps {
 
             mps_lock  lock(mutex);
 
-            if (confirmed_message == nullptr) {
-                if (timeout_ms != pool_options::INFINITE_WAIT)
-                    cond.wait_for(lock, std::chrono::milliseconds(timeout_ms));
-                else
-                    cond.wait(lock); // ignore sonarlint hint
-            }
+            // Predicate-style waiting guards against spurious wakeups: the wait
+            // only returns once a message is actually confirmed (or, for the
+            // timed form, the timeout truly elapsed).
+            if (timeout_ms != pool_options::INFINITE_WAIT)
+                cond.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                              [this]{ return confirmed_message != nullptr; });
+            else
+                cond.wait(lock, [this]{ return confirmed_message != nullptr; });
 
             std::shared_ptr<const T_m> res = confirmed_message;
 
