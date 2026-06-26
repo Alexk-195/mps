@@ -2,6 +2,11 @@
 #include <mps.h>
 #include "support.h"
 
+#include <atomic>
+#include <sstream>
+#include <thread>
+#include <vector>
+
 // Regression tests for the code-review findings fixed in this change set.
 
 namespace {
@@ -104,4 +109,46 @@ TEST(ReviewFixes, RemoveFromWrongPoolReturnsZero) {
 // make elapsed time jump or run backwards.
 TEST(ReviewFixes, TimerUsesSteadyClock) {
     EXPECT_TRUE(mps::timer::clock_type::is_steady);
+}
+
+// Finding 12: pool::dump() must not data-race with the pool thread mutating its
+// worker list. dump() previously read workers.size() directly while the pool
+// thread did push_back/erase on the same vector (reproducible under TSan via
+// base::dump_all_instances). It now reports a relaxed-atomic worker count.
+// This test hammers dump() from another thread while workers are added/removed,
+// then deterministically verifies the reported count.
+TEST(ReviewFixes, DumpDoesNotRaceWithWorkerMutation) {
+    auto p = make_started_pool(); // pool thread mutates the worker vector
+
+    std::atomic<bool> stop{false};
+    std::thread dumper([&]{
+        while (!stop.load(std::memory_order_relaxed)) {
+            std::ostringstream os;
+            p->dump(os); // must not race with add/remove on the pool thread
+        }
+    });
+
+    std::vector<std::shared_ptr<CountingWorker>> ws;
+    for (int i = 0; i < 50; ++i) {
+        auto w = std::make_shared<CountingWorker>();
+        p->add_worker(w);
+        ws.push_back(w);
+    }
+    for (int i = 0; i < 25; ++i)
+        p->remove_worker(ws[i]);
+
+    // A sentinel worker plus one message: when the sentinel has processed the
+    // message, every preceding internal add/remove message has been handled too
+    // (the queue is FIFO), so the worker count is deterministic: 50 - 25 + 1.
+    auto sentinel = std::make_shared<CountingWorker>();
+    p->add_worker(sentinel);
+    p->push_back(std::make_shared<mps::notification_message>());
+    ASSERT_TRUE(sentinel->await(1, 2000));
+
+    stop.store(true, std::memory_order_relaxed);
+    dumper.join();
+
+    std::ostringstream os;
+    p->dump(os);
+    EXPECT_NE(os.str().find("Workers: 26"), std::string::npos) << os.str();
 }

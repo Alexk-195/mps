@@ -187,7 +187,7 @@ Tests use **GoogleTest** fetched via CMake `FetchContent` at `v1.14.0`.
 
 | Binary | Sources | Notes |
 |--------|---------|-------|
-| `mps_tests` | `test_timer.cpp`, `test_ts_queue.cpp`, `test_synchronized.cpp` | Standard build |
+| `mps_tests` | `test_timer.cpp`, `test_ts_queue.cpp`, `test_synchronized.cpp`, `test_pool_lifecycle.cpp`, `test_pool_workers.cpp`, `test_pool_messages.cpp`, `test_waiter.cpp`, `test_distributor.cpp`, `test_pool_thread.cpp`, `test_priority.cpp`, `test_review_fixes.cpp` | Standard build |
 | `mps_tests_tracking` | `test_object_tracking.cpp` | Built with `-DMPS_TRACK_OBJECTS` |
 
 ### Test Helpers (`tests/support.h`)
@@ -217,7 +217,9 @@ Triggers on push and PR to `main`. Single job on `ubuntu-latest`:
 3. `cmake --build build --parallel`
 4. `ctest --test-dir build --output-on-failure`
 
-No Windows/macOS matrix, no sanitizers, no coverage.
+No Windows/macOS matrix, no coverage.
+
+**ThreadSanitizer caveat.** GCC 11's bundled `libtsan` has **no interceptor for `pthread_cond_clockwait`**, which libstdc++ uses to implement `std::condition_variable::wait_for`/`wait_until` with `steady_clock`. Any timed wait in MPS (`waiter::wait(timeout)`, `ts_queue::pop(timeout)`, `flush()`) therefore produces *spurious* "data race"/"double lock" reports under TSan on that toolchain — a pure-stdlib `wait_for` handoff reproduces them with no MPS code involved. The infinite-wait paths (`cond.wait`) are clean. To sanitize meaningfully, use a newer toolchain (clang, or gcc ≥ 12 whose `libtsan` intercepts `pthread_cond_clockwait`); ASan/UBSan are unaffected.
 
 ---
 
@@ -242,7 +244,9 @@ Use this to detect leaks during development. The feature is disabled in normal b
 | ~~`add_worker` sets `owned = true` before `owner_pool`; tiny race window~~ — closed by checking atomic `owned` in `remove_worker` | `src/mps.cpp:466,477` | Resolved |
 | ~~`insufficient_privileges` wrote to `std::cout` instead of `std::cerr`~~ — fixed | `src/mps.cpp:187-189` | Resolved |
 | ~~Signed/unsigned mix in `waiter::check`~~ — both variables now `unsigned int` | `src/mps.h:446-448` | Resolved |
+| ~~`pool::dump()` read `workers.size()` while the pool thread mutated the vector (data race, reachable via `dump_all_instances`)~~ — now reports a relaxed-atomic `worker_count` | `src/mps.cpp` (`dump`, `add/remove_worker_internal`) | Resolved |
 | Shared `nmessage` reused for all notifications (safe because `message` is `const`, but undocumented) | `src/mps.cpp:376,454,600` | Info |
+| Timed waits trip GCC 11 ThreadSanitizer (missing `pthread_cond_clockwait` interceptor) — false positives, not real races; see CI Pipeline note | `src/mps.h` (`waiter::wait`), `ts_queue::pop` | Info |
 
 ---
 
