@@ -404,6 +404,11 @@ namespace mps {
 
         /// flushes the queue using timeout (same format as for waiter)
         /// returns true if flush was successful
+        /// Note: flush() uses an mps::waiter internally, so it is subject to the
+        /// same locking-hierarchy rule: it throws mps::locking_exception unless the
+        /// calling thread's locking priority is strictly higher than this pool's
+        /// priority. Raise it with mps::set_this_thread_prio() before calling from
+        /// a plain (non-pool) thread.
         virtual bool flush(int timeout_ms) mps_thread_safe  = 0;
 
         /// dump some info about pool and its thread

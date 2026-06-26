@@ -367,6 +367,12 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         /// container with workers
         mps_thread_critical worker_container workers;
 
+        /// Relaxed atomic mirror of workers.size(), maintained on the pool thread.
+        /// dump() may be called from any thread (e.g. via base::dump_all_instances)
+        /// while the pool thread mutates the workers vector; reading this atomic
+        /// instead of workers.size() avoids that data race.
+        std::atomic<size_t> worker_count{0};
+
         /// thread pointer
         mps_thread_critical thread_ptr thread;
 
@@ -398,6 +404,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
             auto it = std::find(workers.begin(), workers.end(), w);
             if (it != workers.end()) {
                 workers.erase(it);
+                worker_count.fetch_sub(1, std::memory_order_relaxed);
             }
             else
                 return; // don't reset workers owner if in wrong pool
@@ -412,6 +419,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         /// used internally if lock is obtained
         void add_worker_internal(worker_container::value_type w) {
             workers.push_back(w);
+            worker_count.fetch_add(1, std::memory_order_relaxed);
         }
 
         /// process internal message like add_worker,remove_worker,stop,...
@@ -560,7 +568,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 
         void dump(std::ostream & ostr) override
         {
-            ostr << "Pool Name:" << node_name() << ",Thread ID:" << native_thread_id() << ", Use count:" << self_weak.use_count() << ", Workers: " << workers.size() << std::endl;
+            ostr << "Pool Name:" << node_name() << ",Thread ID:" << native_thread_id() << ", Use count:" << self_weak.use_count() << ", Workers: " << worker_count.load(std::memory_order_relaxed) << std::endl;
         }
     };
 
