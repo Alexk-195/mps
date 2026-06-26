@@ -366,8 +366,16 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         /// thread pointer
         mps_thread_critical thread_ptr thread;
 
-        /// own smart ptr reference keeps pool during thread execution
-        mps_thread_critical std::shared_ptr<pool> own_ref;
+        /// Weak self-reference used to populate a worker's owner_pool. It is set
+        /// once at construction and, being weak, does not keep the pool alive --
+        /// so a pool that is created but never started is freed when the caller
+        /// drops its shared_ptr (no permanent self-owning cycle).
+        mps_thread_critical std::weak_ptr<pool> self_weak;
+
+        /// Keep-alive self-reference held only while the worker thread runs, so
+        /// the pool survives even if the caller drops its shared_ptr mid-execution.
+        /// Reset by thread_static_proc once the thread loop has exited.
+        mps_thread_critical std::shared_ptr<pool> keep_alive;
 
         /// used to start thread
         mps_thread_critical std::atomic<int> started;
@@ -440,6 +448,12 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         }
 
         ~pool_impl() override {
+            // keep_alive holds the pool alive until the thread loop has exited,
+            // so by the time we get here the thread has finished. If the caller
+            // never joined it, detach the finished thread rather than letting the
+            // std::thread destructor call std::terminate() on a joinable thread.
+            if (thread && thread->joinable())
+                thread->detach();
             if (mps_objects_tracking)
                 std::cout << "pool " << node_name() << " destroyed" << std::endl;
         }
@@ -465,11 +479,19 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
                 throw exception("worker must not be null");
 
             if (!w->owned.exchange(true)) {
-                auto m = std::make_shared<pool_internal_message>();
-                m->type = pool_internal_message::message_type::m_add_worker;
-                m->w = w;
-                w->owner_pool = own_ref;
-                return queue.push(m);
+                try {
+                    auto m = std::make_shared<pool_internal_message>();
+                    m->type = pool_internal_message::message_type::m_add_worker;
+                    m->w = w;
+                    w->owner_pool = self_weak;
+                    return queue.push(m);
+                } catch (...) {
+                    // The add never made it onto the queue: undo the ownership
+                    // claim so the worker can be added again later.
+                    w->owner_pool.reset();
+                    w->owned.store(false);
+                    throw;
+                }
             } else
                 throw exception("worker already added");
         }
@@ -479,12 +501,15 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
             if (w == nullptr)
                 throw exception("worker must not be null");
 
-            // Use the atomic owned flag instead of owner_pool: the weak_ptr can be torn
-            // or stale relative to owned (set in add_worker before owner_pool). If the
-            // worker belongs to a different pool, remove_worker_internal will not find
-            // it and silently no-op.
             if (!w->owned.load())
                 throw exception("worker has no owner");
+
+            // Honor the i_worker_pool contract: if the worker does not belong to
+            // this pool, return 0 and leave it active in its owning pool rather
+            // than queueing a no-op removal whose return value would be misleading.
+            auto owner = w->get_owner_pool().lock();
+            if (owner.get() != this)
+                return 0;
 
             auto m = std::make_shared<pool_internal_message>();
             m->type = pool_internal_message::message_type::m_remove_worker;
@@ -508,7 +533,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 
         /// dumps debug infos
         void dump_debug_info(std::ostream &ostr) const {
-            ostr << "Use count:" << own_ref.use_count() << std::endl;
+            ostr << "Use count:" << self_weak.use_count() << std::endl;
         }
 
         /// returns pool options
@@ -520,7 +545,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
         template<class T>
         static std::shared_ptr<T> create_custom(const pool_options &options) {
             std::shared_ptr<T> myPool{new T(options)}; // cannot be changed to make_shared
-            myPool->own_ref = myPool;
+            myPool->self_weak = myPool; // weak: no permanent self-owning cycle
             return myPool;
         }
 
@@ -531,7 +556,7 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 
         void dump(std::ostream & ostr) override
         {
-            ostr << "Pool Name:" << node_name() << ",Thread ID:" << native_thread_id() << ", Use count:" << own_ref.use_count() << ", Workers: " << workers.size() << std::endl;
+            ostr << "Pool Name:" << node_name() << ",Thread ID:" << native_thread_id() << ", Use count:" << self_weak.use_count() << ", Workers: " << workers.size() << std::endl;
         }
     };
 
@@ -540,7 +565,8 @@ insufficient_privileges::insufficient_privileges(): exception("Insufficient priv
 void pool_impl::start() mps_thread_safe {
     if (started.fetch_add(1) == 0) {
         // keep for debugging:  std::cout << "starting pool " << node_name() << std::endl;
-        std::shared_ptr<pool> local_ref(own_ref);
+        // Hold a keep-alive self-reference for the duration of the thread run.
+        keep_alive = self_weak.lock();
         thread = std::make_shared<std::thread>(thread_static_proc, get_this_critical());
         started.fetch_add(2);
     } else {
@@ -557,7 +583,10 @@ void pool_impl::stop() mps_thread_safe {
 }
 
 void pool_impl::join() mps_thread_safe {
-    if (started.load() == 3) {
+    // Guard on joinable() so join() is idempotent: a second call (or a call after
+    // the thread detached itself) is a harmless no-op instead of throwing
+    // std::system_error from join()ing a non-joinable thread.
+    if (started.load() == 3 && thread && thread->joinable()) {
         // keep for debugging:  std::cout << "joining pool ... " << node_name() << std::endl;
         thread->join();
         // keep for debugging:  std::cout << "joined pool " << node_name() << std::endl;
@@ -580,7 +609,15 @@ void pool_impl::thread_proc() {
     pool_short_name[short_name.size()] = 0;
 
     platform_thread_set_name(pool_short_name);
-    platform_thread_set_schedule_priority(options.type);
+    // Setting the OS scheduling priority can fail (e.g. EPERM without sufficient
+    // privileges). Report it here instead of letting the exception escape the
+    // thread function, which would call std::terminate() on the whole process.
+    try {
+        platform_thread_set_schedule_priority(options.type);
+    } catch (const mps::exception &e) {
+        std::cerr << "mps: pool \"" << node_name() << "\" could not set scheduling priority: "
+                  << e.what() << ". Continuing with default scheduling." << std::endl;
+    }
 
     /// thread loop will go until pool is stopped
     while (run) {
@@ -628,11 +665,12 @@ void pool_impl::thread_static_proc(pool_impl *p) {
     tls_priority = p->options.priority;
 
     p->thread_proc();
-    if (p->own_ref.use_count() == 1) {
-        // we should detached
+    if (p->keep_alive.use_count() == 1) {
+        // Nobody else holds a reference, so no one will join(): detach before the
+        // keep_alive reset below destroys the pool.
         p->thread->detach();
     }
-    p->own_ref.reset();
+    p->keep_alive.reset();
 }
 
 
@@ -656,13 +694,18 @@ bool pool_impl::flush(int timeout_ms) const {
     auto nm = std::make_shared<mps::notification_message>();
     auto mw = std::make_shared<mps::messagewaiter<mps::notification_message> >(nm);
     add_worker(mw);
-    push_back(nm);
-    auto nm2 = mw->wait(timeout_ms);
+    std::shared_ptr<const mps::notification_message> nm2;
+    try {
+        push_back(nm);
+        nm2 = mw->wait(timeout_ms);
+    } catch (...) {
+        // wait() can throw (e.g. locking_exception for a caller with insufficient
+        // priority). Make sure the temporary waiter is removed before propagating.
+        remove_worker(mw);
+        throw;
+    }
     remove_worker(mw);
-    if (nm2.get() == nm.get()) {
-        return true;
-    } else
-        return false;
+    return nm2.get() == nm.get();
 }
 
 //------------------------------- pool -----------------------------------
@@ -740,6 +783,8 @@ void timer::reset() {
 
             distributor_impl(size_t n, const pool_options & opts, const std::string & pools_name)
             {
+                if (n == 0)
+                    throw exception("distributor requires at least one pool");
                 node_name("distributor");
                 pools.resize(n);
                 for (size_t i=0;i<n;i++)
