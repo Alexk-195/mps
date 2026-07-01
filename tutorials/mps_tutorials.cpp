@@ -29,7 +29,7 @@ namespace mps_extra {
         {
         public:
             /// let's use this simple greeting .....
-            std::string greeting = "Hello world! Mps is working file...";
+            std::string greeting = "Hello world! Mps is working fine...";
         };
 
         /// and here is the worker
@@ -923,6 +923,330 @@ namespace mps_extra {
         end_tutorial();
     }
 
+    void tutorial::tutorial_15()
+    {
+        start_tutorial(15);
+        ost << "Multi stage message passing and processing. Custom waiter and custom confirm_message function" << std::endl;
+        mps::pool_options opts;
+        // Show usage of custom confirm_message function override and custom waiter class
+
+        // Setup:
+        // Stage 1: generates a message and sends it to Stage 2
+        // Stage 2: filters messages and forwards the filtered ones to Stage 3
+        // Stage 3: receives the result and stores it
+        // Step 1: define the workers and the waiter
+
+        // Stage 1 processing in a worker: send the counter value to Stage 2
+        class Stage1Worker: public mps::worker {
+            std::weak_ptr<mps::i_messages_acceptor> receiver;
+            int counter = 0;
+            public:
+            Stage1Worker(std::weak_ptr<mps::i_messages_acceptor> receiver):receiver(receiver)
+            {
+
+            }
+            void process(std::shared_ptr<const mps::message> m) override
+            {
+                (void)m; // we ignore the incoming message and generate a new one with an increasing number
+                counter++;
+                auto m2 = std::make_shared<MyMessage>();
+                m2->int_value = counter;
+                if (auto r = receiver.lock()) {
+                    r->push_back(m2);
+                }
+                
+            }
+        };  
+        
+        // Our specific result message
+        class ResultMessage : public mps::message {
+            public:
+            int result = 0; ///< result will be stored here
+        };
+        
+
+        // Stage 2 processing in a worker: filter numbers, forward only those which are divisible by 17
+        class Stage2Worker: public mps::worker {
+            std::weak_ptr<mps::pool> receiver;
+            public:
+            Stage2Worker(std::weak_ptr<mps::pool> receiver):receiver(receiver)
+            {
+
+            }
+            void process(std::shared_ptr<const mps::message> m) override
+            {
+                auto m2 = std::dynamic_pointer_cast<const MyMessage>(m);
+                if (m2)
+                {
+                    if (m2->int_value % 17 == 0) {
+                        if (auto r = receiver.lock()) {
+                            auto m3 = std::make_shared<ResultMessage>();
+                            m3->result = m2->int_value * 3; // this is the result value
+                            r->push_back(m3);
+                        }
+                    }
+                }
+            }
+        };
+
+
+        // Stage 3 processing in a worker: wait for result message and print it
+        class Stage3Worker: public mps::worker {
+
+            void process(std::shared_ptr<const mps::message> m) override
+            {
+                auto m3 = std::dynamic_pointer_cast<const ResultMessage>(m);
+                if (m3)
+                {
+                    last_result = m3->result;
+                }
+            }
+            public:
+            Stage3Worker() = default;
+            int last_result = 0;
+        };
+
+        // Our specific waiter class
+        class MyWaiter : public mps::waiter<ResultMessage>
+        {
+            int match = 0;
+
+            public:
+            MyWaiter(int match):match(match) {}
+
+            /// confirmation override
+            bool confirm_message(std::shared_ptr<const ResultMessage> m) override {
+                return m->result % match == 0; // matches several messages; the matching message is stored internally
+            }
+        };
+
+        // if a timeout is provided, a notification message is
+        // scheduled every 5ms; our worker ignores it and generates its own message,
+        // so we get one message with an increasing counter every 5ms
+        opts.timeout_wait_for_message = 5; 
+        auto p1 = mps::pool::create(opts);
+        p1->node_name("stage1");
+        // stage 2 and 3 will wait for messages forever
+        opts.timeout_wait_for_message = mps::pool_options::INFINITE_WAIT; 
+
+        // later stages can wait for earlier stages, so we define increasing locking prio here.
+        // in this example the stages do not wait for each other, only the main thread waits. But we still
+        // provide increasing values for illustration.
+        opts.priority += 10;
+        auto p2 = mps::pool::create(opts);
+        p2->node_name("stage2");
+        opts.priority += 10;
+        auto p3 = mps::pool::create(opts);
+        p3->node_name("stage3");
+        opts.priority += 10; /// the current thread's prio must be higher, as we want to wait for Stage 3
+        mps::set_this_thread_prio(opts.priority);
+        p1->add_worker(std::make_shared<Stage1Worker>(p2));
+        p2->add_worker(std::make_shared<Stage2Worker>(p3));
+        auto w3 = std::make_shared<Stage3Worker>(); // we will also use it at the end
+        p3->add_worker(w3);
+
+        int expect = 5*17*3; // define an expected condition value for our waiter
+
+        // add the waiter after the worker, so that if the waiter has seen the message,
+        // we can be sure the worker has seen it too
+        auto waiter = std::make_shared<MyWaiter>(expect);
+        p3->add_worker(waiter);
+
+        // start the pipeline in reverse order to make sure we don't miss anything
+        p3->start();
+        p2->start();
+        p1->start(); // after this, Stage 1 will generate a message every 5ms
+
+        auto waitResult = waiter->wait(85*5+50); // message should arrive after 85*5 ms
+        if (waitResult)
+            ost << "Got result " << waitResult->result << ", expected " << expect << std::endl;
+        else
+            ost << "ERROR: no message received" << std::endl;
+        
+        // to wait again, we must reset the waiter
+        waiter->reset();
+        // the next matching result (2*expect) arrives ~85*5 ms after the first one
+        auto waitResult2 = waiter->wait(85*5+50);
+        if (waitResult2)
+            ost << "Got result " << waitResult2->result << ", expected " << 2*expect << std::endl;
+        else
+            ost << "ERROR: no message received" << std::endl;
+
+        // tear down in stage order
+        p1->stop();
+        p2->stop();
+        p3->stop();
+        p1->join();
+        p2->join();
+        p3->join();
+        
+        ost << "As all pools are joined, we can safely access and verify the result which was stored in Stage 3: " << w3->last_result << std::endl;
+        ost << "If the teardown takes too long, the above value can be larger than the last result received by the waiter. This is OK." << std::endl;
+        end_tutorial();
+    }
+
+    void tutorial::tutorial_16()
+    {
+        start_tutorial(16);
+        ost << "Backpressure and push_back_to_limit usage in producer/consumer scenario" << std::endl;
+        mps::pool_options opts;
+        opts.timeout_wait_for_message = 5; // producer is woken every 5ms and emits a message each time
+        auto producer = mps::pool::create(opts);
+        producer->node_name("producer");
+        auto consumer = mps::pool::create();
+        consumer->node_name("consumer");
+        
+        // Producer worker will track skipped messages 
+        class ProducerWorker:public mps::worker
+        {
+            std::weak_ptr<mps::i_messages_acceptor> receiver;
+            public:
+
+            int skipped = 0; ///< will be incremented if we cannot push our message
+            int counter = 0;
+            ProducerWorker(std::weak_ptr<mps::i_messages_acceptor> r):receiver(r) {}
+
+            void process(std::shared_ptr<const mps::message> m) override
+            {
+                (void)m; // we ignore the incoming notification and produce our own message instead
+
+                if (auto r = receiver.lock())
+                {
+                    bool pushed;
+                    // push only if the consumer queue holds fewer than 10 messages;
+                    // otherwise the message is dropped and we count it as skipped (backpressure)
+                    r->push_back_to_limit(std::make_shared<MyMessage>("MyMessage", counter++), 10, pushed);
+                    if (!pushed) {
+                        skipped++;
+                        // Propagate backpressure upstream in case we also receive messages from other sources.
+                        // We do so by adding a small sleep to our processing routine, which slows our own intake.
+                        // This is optional and might not be desired, depending on the use case.
+                        mps::sleep_ms(5); 
+                    }
+                }
+            }
+        };
+
+        // Define a consumer which is slower than the producer
+        class ConsumerWorker : public mps::worker
+        {
+            public: 
+            int consumed = 0;
+            int last = 0;
+            void process(std::shared_ptr<const mps::message> m) override
+            {
+                if (auto mym = std::dynamic_pointer_cast<const MyMessage>(m))
+                {
+                    mps::sleep_ms(10); // simulate heavy computation that cannot keep up with the producer
+                    last = mym->int_value; // remember the value of the most recently consumed message
+                    consumed++;
+                }   
+            }
+        };
+
+        // setup and start
+        auto pw = std::make_shared<ProducerWorker>(consumer);
+        producer->add_worker(pw);
+        auto cw = std::make_shared<ConsumerWorker>();
+        consumer->add_worker(cw);
+
+        consumer->start();
+        producer->start();
+
+        ost << "Now just let it run for a short time period" << std::endl;
+        mps::sleep_ms(500); // let the pipeline run so the queue fills and backpressure kicks in
+
+        // tear down in reverse order
+        producer->stop();
+        consumer->stop();
+        producer->join();
+        consumer->join();
+
+        // After join, no worker threads are running, so we can safely read the counters
+        ost << "Skipped counter should be > 0. It's not deterministic and in the current run: " << pw->skipped << std::endl;
+        ost << "Consumed number of messages: " << cw->consumed << std::endl;
+        ost << "Total number of messages generated by producer (should be roughly the sum of the two above values): " << pw->counter << std::endl;
+        // Clarification: during the teardown, messages can be left in the queue, this is normal
+        ost << "Last consumed message: " << cw->last << std::endl;
+        end_tutorial(); 
+    }
+
+    void tutorial::tutorial_17()
+    {
+        start_tutorial(17);
+        ost << "Using mps::ts_queue directly as a stand-alone thread-safe queue" << std::endl;
+
+        // ts_queue is the thread-safe FIFO that pools use internally, but it can also be
+        // used on its own, without pools, workers or messages. Here we store plain ints.
+        mps::ts_queue<int> queue;
+
+        // --- Part 1: basic push / pop semantics and their return values ---
+
+        // pop() returns a pair: first = number of elements left in the queue, second = whether
+        // an item was actually popped. On an empty queue with timeout 0 (no wait) nothing is popped.
+        int value = -1;
+        auto empty = queue.pop(value, 0); // timeout 0 => return immediately
+        ost << "Pop on empty queue: popped=" << empty.second << " (expected 0)" << std::endl;
+
+        // push() returns the new size of the queue.
+        size_t size = 0;
+        size = queue.push(10);
+        size = queue.push(20);
+        size = queue.push(30);
+        ost << "After pushing 3 items, size is " << size << " (expected 3)" << std::endl;
+
+        // Drain the queue with non-blocking pops. FIFO order is preserved.
+        while (true) {
+            auto r = queue.pop(value, 0);
+            if (!r.second) // r.second == false => queue was empty, nothing popped
+                break;
+            ost << "Popped " << value << ", remaining " << r.first << std::endl;
+        }
+
+        // --- Part 2: push_to_limit for bounded queues (backpressure) ---
+
+        // push_to_limit only pushes if the current size is below the limit, and reports via 'pushed'.
+        bool pushed = false;
+        for (int i = 0; i < 5; i++) {
+            queue.push_to_limit(i, 3, pushed); // cap the queue at 3 elements
+            ost << "push_to_limit(" << i << ", limit=3): pushed=" << pushed << std::endl;
+        }
+        // Drain again so the queue is empty for the next part.
+        while (queue.pop(value, 0).second) { /* discard */ }
+
+        // --- Part 3: blocking pop across threads ---
+
+        // A background producer pushes one item every 20ms. The main thread blocks in pop()
+        // until an item arrives. This is the same condition-variable hand-off pools rely on.
+        // We use mps::pool_thread only as a convenient way to run code in a background thread.
+        auto producer = mps::pool_thread([&queue]() {
+            for (int i = 1; i <= 5; i++) {
+                mps::sleep_ms(20);
+                queue.push(i * 100);
+            }
+        }, "ts_queue-producer");
+
+        for (int i = 0; i < 5; i++) {
+            // timeout < 0 => block forever until an item is available
+            auto r = queue.pop(value, mps::pool_options::INFINITE_WAIT);
+            if (r.second)
+                ost << "Blocking pop received " << value << std::endl;
+        }
+
+        // The producer function has finished; join its thread before the queue goes out of scope.
+        producer->join();
+
+        // --- Part 4: timed pop that times out on an empty queue ---
+
+        mps::timer t;
+        t.reset();
+        auto timed = queue.pop(value, 50); // wait up to 50ms, but nothing will arrive
+        ost << "Timed pop on empty queue after " << t.elapsed() << "ms: popped=" << timed.second
+            << " (expected 0)" << std::endl;
+
+        end_tutorial();
+    }
+
     void tutorial::walkthrough() {
         intro();
         tutorial_1();
@@ -939,6 +1263,9 @@ namespace mps_extra {
         tutorial_12();
         tutorial_13();
         tutorial_14();
+        tutorial_15();
+        tutorial_16();
+        tutorial_17();
         ost << "Tutorials done" << std::endl;
     }
 

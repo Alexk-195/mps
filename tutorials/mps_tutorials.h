@@ -27,7 +27,9 @@ namespace mps_extra {
         void tutorial_12();
         void tutorial_13();
         void tutorial_14();
-
+        void tutorial_15();
+        void tutorial_16();
+        void tutorial_17();
         void walkthrough();
         tutorial(std::ostream &ost):ost(ost)
         {
